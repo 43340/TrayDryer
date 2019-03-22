@@ -6,6 +6,7 @@ from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from threading import Thread
+from flask_socketio import SocketIO, emit
 import threading
 from flask_cors import CORS, cross_origin
 import uuid
@@ -20,8 +21,8 @@ import lcddriver
 
 app = Flask(__name__)
 CORS(app)
-
 app.config['SECRET_KEY'] = 'thisissecret'
+socketio = SocketIO(app)
 basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + \
     os.path.join(basedir, 'dryer.db')
@@ -30,6 +31,7 @@ pi = pigpio.pi()
 sensor1 = si7021.si7021(1)
 sensor2 = si7021.si7021(3)
 pin = 26
+fan = 6
 pi.set_mode(pin, pigpio.OUTPUT)
 global stop_run
 global start_read
@@ -242,7 +244,11 @@ def login():
         token = jwt.encode({'public_id': user.public_id, 'exp': datetime.datetime.utcnow(
         ) + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
 
-        return jsonify({'token': token.decode('UTF-8')})
+        return jsonify({
+            'token': token.decode('UTF-8'),
+            'user': user.name,
+            'admin': user.admin
+        })
 
     return make_response('Could not verify', 401, {'WWW-Authenticate': 'Basic realm="Login required"'})
 
@@ -306,7 +312,7 @@ def get_all_processes_by_user(current_user):  # only the users processes
         process_data['user_id'] = process.user_id
         output.append(process_data)
 
-    return jsonify({'processes': output})
+    return jsonify(output)
 
 # TODO: Change the specs cause this code smells
 @app.route('/process', methods=['POST'])
@@ -331,6 +337,20 @@ def new_process(current_user):
     # run_process(name, set_temp, cook_time, read_int, time_stamp, user_id)
 
     return jsonify({'message': 'Process started!'})
+
+@app.route('/process/<process_id>', methods=['DELETE'])
+@token_required
+def delete_process(current_user, process_id):
+
+    process = ProcessData.query.filter_by(process_id=process_id).first()
+
+    if not process:
+        return jsonify({'message': 'Entry not found'})
+
+    db.session.delete(process)
+    db.session.commit()
+
+    return jsonify({'message': 'The entry has been deleted!'})
 
 
 #  ██████╗  █████╗ ████████╗ █████╗
@@ -368,6 +388,14 @@ def get_process_by_id(current_user, process_id):
 #  ██║     ╚██████╔╝██║ ╚████║╚██████╗   ██║   ██║╚██████╔╝██║ ╚████║███████║
 #  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
 #
+def send_current(temp, hum, time_left):
+    socketio.emit('some event', {
+        'temp': temp,
+        'hum': hum,
+        'timeleft': time_left
+    })
+
+
 def get_temphumi_data(pid=""):
 
     temp = (sensor1.Temperature() + sensor2.Temperature()) / 2
@@ -385,13 +413,17 @@ def log_data(pid, set_temp, cook_time, read_interval):
     global read_counter
 
     temp, hum, ts = get_temphumi_data(pid)
+    timeleft = str(datetime.timedelta(seconds=cook_time))
     print(time.time())
     print(temp)
     lcd.lcd_display_string("Temp: " + str(round(temp, 2)) + "C", 1)
     lcd.lcd_display_string("Hum: " + str(round(hum, 2)) + "%", 2)
-    lcd.lcd_display_string("ETA: " + str(datetime.timedelta(seconds=cook_time)), 3)
+    lcd.lcd_display_string("ETA: " + timeleft, 3)
+
+    send_current(str(round(temp, 2)), str(round(hum, 2)), timeleft)
 
     adjust_heater_power(set_temp, temp)
+    adjust_fan_power()
 
     if read_counter >= read_interval:
         read_counter = 0
@@ -409,18 +441,18 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval):
         count = 0
         while True:
             count += 1
-            yield max(t + count*period - time.time(),0)
+            yield max(t + count*period - time.time(), 0)
     g = g_tick()
     while True:
         time.sleep(next(g))
-        f(pid, set_temp, cook_time, read_interval)
         cook_time = cook_time - 1
+        f(pid, set_temp, cook_time, read_interval)
 
         global stop_run
         if stop_run:
             break
 
-        if cook_time <= 0:
+        if cook_time < 0:
             set_stop_run()
             break
 
@@ -439,6 +471,13 @@ def adjust_heater_power(set_temp, current_temp):
         pi.write(pin, 0)
     else:
         pi.write(pin, 1)
+
+
+def adjust_fan_power():
+    if stop_run:
+        pi.write(fan, 0)
+    else:
+        pi.write(fan, 1)
 
 
 # TODO: Change this use threading.time
@@ -463,7 +502,9 @@ def start_process(pid, set_temp, cook_time, read_interval):
             break
 
     pi.write(pin, 0)
+    pi.write(fan, 0)
     print("yay")
+    set_stop_run
     return stop_run
 
 
@@ -513,6 +554,8 @@ def run_process(pid, set_temp, cook_time, read_interval):
 
 def set_stop_run():
     global stop_run
+    pi.write(pin, 0)
+    pi.write(fan, 0)
     stop_run = True
     lcd.lcd_clear()
     time.sleep(1)
@@ -521,4 +564,5 @@ def set_stop_run():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8023, debug="True")
+    # app.run(host='0.0.0.0', port=8023, debug="True")
+    socketio.run(app, host='0.0.0.0', port=8023)

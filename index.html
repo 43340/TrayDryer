@@ -1,0 +1,21 @@
+<html>
+    <head>
+        <title>
+            Recieve!!!
+        </title>
+        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/1.4.8/socket.io.min.js"></script>
+        <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/2.2.4/jquery.min.js"></script>
+    </head>
+    <body>
+        <script type="text/javascript">
+        
+            var socket = io.connect('http://10.3.141.1:8023');
+
+            socket.on('some event', function(msg) {
+                console.log(msg)
+            })
+
+        </script>
+        <ul id="data"></ul>
+    </body>
+</html>
