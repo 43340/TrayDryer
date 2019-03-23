@@ -243,13 +243,18 @@ def set_variables():
 
 
 def main():
-    while True:
-        if checkProcess():
-            set_variables()
-        else:
-            key = getKey()
-            if(key == '*'):
-                stopProcess()
+    try:
+        while True:
+            if checkProcess():
+                set_variables()
+            else:
+                key = getKey()
+                if(key == '*'):
+                    stopProcess()
+    except:
+        lcd.lcd_clear()
+        lcd.lcd_display_string("Make sure the server", 1)
+        lcd.lcd_display_string("is online", 2)
 
 
 main()
