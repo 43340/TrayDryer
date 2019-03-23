@@ -378,7 +378,7 @@ def get_process_by_id(current_user, process_id):
         dht_data['process_id'] = data.process_id
         output.append(dht_data)
 
-    return jsonify({'dht_data': output})
+    return jsonify(output)
 
 
 #  ███████╗██╗   ██╗███╗   ██╗ ██████╗████████╗██╗ ██████╗ ███╗   ██╗███████╗
@@ -410,29 +410,39 @@ def get_temphumi_data(pid=""):
 # TODO: Function is getting too bloated. Try slimming ti down
 def log_data(pid, set_temp, cook_time, read_interval):
 
-    global read_counter
+    try:
+        global read_counter
 
-    temp, hum, ts = get_temphumi_data(pid)
-    timeleft = str(datetime.timedelta(seconds=cook_time))
-    print(time.time())
-    print(temp)
-    lcd.lcd_display_string("Temp: " + str(round(temp, 2)) + "C", 1)
-    lcd.lcd_display_string("Hum: " + str(round(hum, 2)) + "%", 2)
-    lcd.lcd_display_string("ETA: " + timeleft, 3)
+        temp, hum, ts = get_temphumi_data(pid)
+        timeleft = str(datetime.timedelta(seconds=cook_time))
+        rtemp = round(temp, 2)
+        rhum = round(hum, 2)
+        print(time.time())
+        print(temp)
+        lcd.lcd_display_string("Temp: {:0.2f}C".format(temp), 1)
+        lcd.lcd_display_string("Temp: {:0.2f}%".format(hum), 2)
+        lcd.lcd_display_string("ETA: " + timeleft, 3)
 
-    send_current(str(round(temp, 2)), str(round(hum, 2)), timeleft)
+        send_current(str(rtemp), str(rhum), timeleft)
 
-    adjust_heater_power(set_temp, temp)
-    adjust_fan_power()
+        adjust_heater_power(set_temp, temp)
+        adjust_fan_power()
 
-    if read_counter >= read_interval:
-        read_counter = 0
-        dht_data = DHTData(temp=temp, hum=hum, time_stamp=ts, process_id=pid)
+        if read_counter >= read_interval:
+            read_counter = 0
+            dht_data = DHTData(temp=rtemp, hum=rhum, time_stamp=ts, process_id=pid)
+            db.session.add(dht_data)
+            db.session.commit()
+
+        read_counter = read_counter + 1
+        cook_time = cook_time - 1
+    except:
+        print("error")
+        dht_data = DHTData(temp=0, hum=0, time_stamp=0, process_id=pid)
         db.session.add(dht_data)
         db.session.commit()
-
-    read_counter = read_counter + 1
-    cook_time = cook_time - 1
+        pi.write(pin, 0)
+        pi.write(fan, 0)
 
 
 def do_every(period, f, pid, set_temp, cook_time, read_interval):
