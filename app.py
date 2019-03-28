@@ -29,13 +29,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + \
 
 pi = pigpio.pi()
 sensor1 = si7021.si7021(1)
-sensor2 = si7021.si7021(3)
+# sensor2 = si7021.si7021(3)
 pin = 26
 fan = 6
 pi.set_mode(pin, pigpio.OUTPUT)
 global stop_run
 global start_read
 global read_counter
+global timer
+timer = 0
 start_read = False
 stop_run = True
 read_counter = 0
@@ -242,7 +244,7 @@ def login():
 
     if check_password_hash(user.password, auth.password):
         token = jwt.encode({'public_id': user.public_id, 'exp': datetime.datetime.utcnow(
-        ) + datetime.timedelta(minutes=30)}, app.config['SECRET_KEY'])
+        ) + datetime.timedelta(days=1)}, app.config['SECRET_KEY'])
 
         return jsonify({
             'token': token.decode('UTF-8'),
@@ -398,8 +400,8 @@ def send_current(temp, hum, time_left):
 
 def get_temphumi_data(pid=""):
 
-    temp = (sensor1.Temperature() + sensor2.Temperature()) / 2
-    hum = (sensor1.Humidity() + sensor2.Humidity()) / 2
+    temp = sensor1.Temperature()# + sensor2.Temperature()) / 2
+    hum = sensor1.Humidity()# + sensor2.Humidity()) / 2
 
     if hum is not None and temp is not None:
         ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -408,19 +410,20 @@ def get_temphumi_data(pid=""):
 
 
 # TODO: Function is getting too bloated. Try slimming ti down
-def log_data(pid, set_temp, cook_time, read_interval):
-
+def log_data(pid, set_temp, cook_time, read_interval, base_time):
     try:
         global read_counter
 
         temp, hum, ts = get_temphumi_data(pid)
         timeleft = str(datetime.timedelta(seconds=cook_time))
+        timer = float(base_time) - float(datetime.timedelta(seconds=cook_time).total_seconds())
+        print(timer)
         rtemp = round(temp, 2)
         rhum = round(hum, 2)
         print(time.time())
         print(temp)
         lcd.lcd_display_string("Temp: {:0.2f}C".format(temp), 1)
-        lcd.lcd_display_string("Temp: {:0.2f}%".format(hum), 2)
+        lcd.lcd_display_string("Hum: {:0.2f}%".format(hum), 2)
         lcd.lcd_display_string("ETA: " + timeleft, 3)
 
         send_current(str(rtemp), str(rhum), timeleft)
@@ -430,14 +433,13 @@ def log_data(pid, set_temp, cook_time, read_interval):
 
         if read_counter >= read_interval:
             read_counter = 0
-            dht_data = DHTData(temp=rtemp, hum=rhum, time_stamp=ts, process_id=pid)
+            dht_data = DHTData(temp=rtemp, hum=rhum, time_stamp=timer, process_id=pid)
             db.session.add(dht_data)
             db.session.commit()
-
         read_counter = read_counter + 1
         cook_time = cook_time - 1
-    except:
-        print("error")
+    except Exception as error:
+        print(error)
         dht_data = DHTData(temp=0, hum=0, time_stamp=0, process_id=pid)
         db.session.add(dht_data)
         db.session.commit()
@@ -445,7 +447,7 @@ def log_data(pid, set_temp, cook_time, read_interval):
         pi.write(fan, 0)
 
 
-def do_every(period, f, pid, set_temp, cook_time, read_interval):
+def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
     def g_tick():
         t = time.time()
         count = 0
@@ -456,10 +458,12 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval):
     while True:
         time.sleep(next(g))
         cook_time = cook_time - 1
-        f(pid, set_temp, cook_time, read_interval)
+        f(pid, set_temp, cook_time, read_interval, base_time)
 
         global stop_run
         if stop_run:
+            global timer
+            timer = 0
             break
 
         if cook_time < 0:
@@ -499,10 +503,10 @@ def start_process(pid, set_temp, cook_time, read_interval):
 
         current_temp, current_hum, cts = get_temphumi_data(pid)
         adjust_heater_power(set_temp, current_temp)
-        log_data(pid, current_temp, current_hum, cts)
+        log_data(pid, current_temp, current_hum, cts, cook_time)
         lcd.lcd_clear()
         # do_every(read_interval, log_data, pid, set_temp, cook_time, read_interval)
-        do_every(1, log_data, pid, set_temp, cook_time, read_interval)
+        do_every(1, log_data, pid, set_temp, cook_time, read_interval, cook_time)
 
         # time.sleep(read_interval)
         cook_time = cook_time - read_interval
@@ -567,8 +571,8 @@ def set_stop_run():
     pi.write(pin, 0)
     pi.write(fan, 0)
     stop_run = True
-    lcd.lcd_clear()
     time.sleep(1)
+    lcd.lcd_clear()
     lcd.lcd_display_string("Tray Dryer", 1)
     lcd.lcd_display_string("Control System", 2)
 
