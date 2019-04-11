@@ -27,12 +27,15 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + \
     os.path.join(basedir, 'dryer.db')
 
+os.system('python /home/pi/dryer/lcdkp.py &')
+
 pi = pigpio.pi()
 sensor1 = si7021.si7021(1)
-# sensor2 = si7021.si7021(3)
+sensor2 = si7021.si7021(3)
 pin = 26
 fan = 6
 pi.set_mode(pin, pigpio.OUTPUT)
+pi.set_mode(fan, pigpio.OUTPUT)
 global stop_run
 global start_read
 global read_counter
@@ -46,8 +49,6 @@ lcd = lcddriver.lcd()
 lcd.lcd_clear()
 lcd.lcd_display_string("Tray Dryer", 1)
 lcd.lcd_display_string("Control System", 2)
-
-
 
 db = SQLAlchemy(app)
 
@@ -142,7 +143,7 @@ def get_all_users(current_user):
         user_data['admin'] = user.admin
         output.append(user_data)
 
-    return jsonify({'users': output})
+    return jsonify(output)
 
 
 @app.route('/user/<public_id>', methods=['GET'])
@@ -290,7 +291,7 @@ def get_all_processes(current_user):
         process_data['user_id'] = process.user_id
         output.append(process_data)
 
-    return jsonify({'processes': output})
+    return jsonify(output)
 
 # get all processes by the user
 @app.route('/process', methods=['GET'])
@@ -328,7 +329,7 @@ def new_process(current_user):
 
     pid = str(uuid.uuid4())
     ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    uid = current_user.public_id
+    uid = current_user.name
 
     log_process_data(pid, data['name'], data['stemp'],
                      data['ctime'], data['rinte'], ts, uid)
@@ -416,12 +417,12 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
 
         temp, hum, ts = get_temphumi_data(pid)
         timeleft = str(datetime.timedelta(seconds=cook_time))
-        timer = float(base_time) - float(datetime.timedelta(seconds=cook_time).total_seconds())
+        timer = datetime.datetime.now() # float(base_time) - float(datetime.timedelta(seconds=cook_time).total_seconds())
         print(timer)
         rtemp = round(temp, 2)
         rhum = round(hum, 2)
-        print(time.time())
         print(temp)
+        print(hum)
         lcd.lcd_display_string("Temp: {:0.2f}C".format(temp), 1)
         lcd.lcd_display_string("Hum: {:0.2f}%".format(hum), 2)
         lcd.lcd_display_string("ETA: " + timeleft, 3)
@@ -489,9 +490,9 @@ def adjust_heater_power(set_temp, current_temp):
 
 def adjust_fan_power():
     if stop_run:
-        pi.write(fan, 0)
+        pi.set_PWM_dutycycle(fan, 64)
     else:
-        pi.write(fan, 1)
+        pi.set_PWM_dutycycle(fan, 64)
 
 
 # TODO: Change this use threading.time
