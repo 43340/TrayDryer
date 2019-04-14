@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-
+# xzx
 from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
@@ -11,6 +11,7 @@ import threading
 from flask_cors import CORS, cross_origin
 import uuid
 import jwt
+import pdfkit
 import time
 import datetime
 import os
@@ -40,6 +41,8 @@ global stop_run
 global start_read
 global read_counter
 global timer
+global time_left
+time_left = ""
 timer = 0
 start_read = False
 stop_run = True
@@ -317,6 +320,7 @@ def get_all_processes_by_user(current_user):  # only the users processes
 
     return jsonify(output)
 
+
 # TODO: Change the specs cause this code smells
 @app.route('/process', methods=['POST'])
 @token_required
@@ -340,6 +344,7 @@ def new_process(current_user):
     # run_process(name, set_temp, cook_time, read_int, time_stamp, user_id)
 
     return jsonify({'message': 'Process started!'})
+
 
 @app.route('/process/<process_id>', methods=['DELETE'])
 @token_required
@@ -391,11 +396,12 @@ def get_process_by_id(current_user, process_id):
 #  ██║     ╚██████╔╝██║ ╚████║╚██████╗   ██║   ██║╚██████╔╝██║ ╚████║███████║
 #  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
 #
-def send_current(temp, hum, time_left):
+def send_current(temp, hum, time_left, stop_run):
     socketio.emit('some event', {
         'temp': temp,
         'hum': hum,
-        'timeleft': time_left
+        'timeleft': time_left,
+        'stop_run': stop_run
     })
 
 
@@ -414,6 +420,8 @@ def get_temphumi_data(pid=""):
 def log_data(pid, set_temp, cook_time, read_interval, base_time):
     try:
         global read_counter
+        global stop_run
+        global time_left
 
         temp, hum, ts = get_temphumi_data(pid)
         timeleft = str(datetime.timedelta(seconds=cook_time))
@@ -427,7 +435,7 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         lcd.lcd_display_string("Hum: {:0.2f}%".format(hum), 2)
         lcd.lcd_display_string("ETA: " + timeleft, 3)
 
-        send_current(str(rtemp), str(rhum), timeleft)
+        send_current(str(rtemp), str(rhum), timeleft, stop_run)
 
         adjust_heater_power(set_temp, temp)
         adjust_fan_power()
@@ -525,11 +533,15 @@ def start_process(pid, set_temp, cook_time, read_interval):
 
 @app.route('/data', methods=['GET'])
 def get_th():
+    global time_left
+    global stop_run
     temp, hum, ts = get_temphumi_data()
 
     return jsonify({
             'temperature': temp,
-            'humidity': hum
+            'humidity': hum,
+            'timeleft': time_left,
+            'stop': stop_run
         })
 
 
@@ -547,6 +559,19 @@ def stop():
     set_stop_run()
 
     return jsonify({'stopped': stop_run})
+
+
+@app.route('/process/report/<process_id>')
+def pdf_template(process_id):
+    process = ProcessData.query.filter_by(process_id=process_id).first()
+    rendered = render_template('pdf_template.html', process_id=process_id, name=process.name, set_temp=process.set_temp, cook_time=str(datetime.timedelta(seconds=process.cook_time)), read_int=process.read_int, time_stamp=process.time_stamp, username=process.user_id)
+    pdf = pdfkit.from_string(rendered, False)
+
+    response = make_response(pdf)
+    response.headers['Content-Type'] = 'application/pdf'
+    response.headers['Content-Disposition'] = 'inline; filename={}.pdf'.format(process_id)
+
+    return response
 
 
 #  ████████╗██╗  ██╗██████╗ ███████╗ █████╗ ██████╗ ███████╗
