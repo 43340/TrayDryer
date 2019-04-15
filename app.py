@@ -469,7 +469,7 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         send_current(str(rtemp), str(rhum), timeleft, stop_run)
 
         adjust_heater_power(set_temp, temp)
-        adjust_fan_power()
+        adjust_fan_power(set_temp, temp)
 
         if read_counter >= read_interval:
             read_counter = 0
@@ -485,6 +485,11 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         db.session.commit()
         pi.write(pin, 0)
         pi.write(fan, 0)
+
+
+def get_temp():
+    temp, hum, ts = get_temphumi_data()
+    return temp
 
 
 def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
@@ -504,6 +509,11 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
         if stop_run:
             global timer
             timer = 0
+            temp = get_temp()
+            while (temp > 40):
+                temp = get_temp()
+                pi.write(fan, 1)
+            pi.write(fan, 0)
             break
 
         if cook_time < 0:
@@ -527,7 +537,9 @@ def adjust_heater_power(set_temp, current_temp):
         pi.write(pin, 1)
 
 
-def adjust_fan_power():
+def adjust_fan_power(set_temp, current_temp):
+    global stop_run
+
     if stop_run:
         pi.set_PWM_dutycycle(fan, 64)
     else:
@@ -556,7 +568,7 @@ def start_process(pid, set_temp, cook_time, read_interval):
             break
 
     pi.write(pin, 0)
-    pi.write(fan, 0)
+    # pi.write(fan, 0)
     print("yay")
     set_stop_run
     return stop_run
