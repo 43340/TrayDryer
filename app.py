@@ -78,6 +78,8 @@ class ProcessData(db.Model):
     set_temp = db.Column(db.Integer)
     cook_time = db.Column(db.Integer)
     read_int = db.Column(db.Integer)
+    initial_w = db.Column(db.Integer)
+    final_w = db.Column(db.Integer)
     time_stamp = db.Column(db.String(80))
     user_id = db.Column(db.Integer)  # now uses string but db still set as int
 
@@ -290,6 +292,8 @@ def get_all_processes(current_user):
         process_data['set_temp'] = process.set_temp
         process_data['cook_time'] = process.cook_time
         process_data['read_int'] = process.read_int
+        process_data['initial_w'] = process.initial_w
+        process_data['final_w'] = process.final_w
         process_data['time_stamp'] = process.time_stamp
         process_data['user_id'] = process.user_id
         output.append(process_data)
@@ -314,6 +318,8 @@ def get_all_processes_by_user(current_user):  # only the users processes
         process_data['set_temp'] = process.set_temp
         process_data['cook_time'] = process.cook_time
         process_data['read_int'] = process.read_int
+        process_data['initial_w'] = process.initial_w
+        process_data['final_w'] = process.final_w
         process_data['time_stamp'] = process.time_stamp
         process_data['user_id'] = process.user_id
         output.append(process_data)
@@ -336,9 +342,34 @@ def new_process(current_user):
     uid = current_user.name
 
     log_process_data(pid, data['name'], data['stemp'],
-                     data['ctime'], data['rinte'], ts, uid)
+                     data['ctime'], data['rinte'], data['initw'], ts, uid)
 
     run_process(pid, data['stemp'], data['ctime'], data['rinte'])
+
+    # run_process function. Do this on a different thread so it doesnt get clogged.
+    # run_process(name, set_temp, cook_time, read_int, time_stamp, user_id)
+
+    return jsonify({'message': 'Process started!'})
+
+
+@app.route('/process/reset')
+@token_required
+def reset_process(current_user):
+    global stop_run
+
+    process = ProcessData.query.order_by(ProcessData.id.desc()).first()
+
+    if not stop_run:
+        return jsonify({'message': 'Process ongoing'}), 403
+
+    pid = str(uuid.uuid4())
+    ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    uid = current_user.name
+
+    log_process_data(pid, process.name, process.set_temp,
+                     process.cook_time, process.read_int, process.initial_w, ts, uid)
+
+    run_process(pid, process.set_temp, process.cook_time, process.read_int)
 
     # run_process function. Do this on a different thread so it doesnt get clogged.
     # run_process(name, set_temp, cook_time, read_int, time_stamp, user_id)
@@ -483,7 +514,7 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
 def log_process_data(pid, name, set_temp, cook_time, read_interval, ts, current_user):
 
     process_data = ProcessData(process_id=pid, name=name, set_temp=set_temp,
-                               cook_time=cook_time, read_int=read_interval, time_stamp=ts, user_id=current_user)
+                               cook_time=cook_time, read_int=read_interval, initial_w=initial_weight, time_stamp=ts, user_id=current_user)
 
     db.session.add(process_data)
     db.session.commit()
@@ -561,10 +592,25 @@ def stop():
     return jsonify({'stopped': stop_run})
 
 
+@app.route('/process/<process_id>/<final_w>', methods=['PUT'])
+@token_required
+def set_final_weight(current_user, process_id, final_w):
+
+    process = ProcessData.query.filter_by(process_id=process_id).first()
+
+    if not process:
+        return jsonify({'message': 'Process not found'})
+
+    process.final_w = final_w
+    db.session.commit()
+
+    return jsonify({'message': 'The final weight has been set'})
+
+
 @app.route('/process/report/<process_id>')
 def pdf_template(process_id):
     process = ProcessData.query.filter_by(process_id=process_id).first()
-    rendered = render_template('pdf_template.html', process_id=process_id, name=process.name, set_temp=process.set_temp, cook_time=str(datetime.timedelta(seconds=process.cook_time)), read_int=process.read_int, time_stamp=process.time_stamp, username=process.user_id)
+    rendered = render_template('pdf_template.html', process_id=process_id, name=process.name, set_temp=process.set_temp, cook_time=str(datetime.timedelta(seconds=process.cook_time)), read_int=process.read_int, init_w=process.initial_w, time_stamp=process.time_stamp, username=process.user_id)
     pdf = pdfkit.from_string(rendered, False)
 
     response = make_response(pdf)
