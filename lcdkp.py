@@ -19,7 +19,7 @@ MATRIX = [
     ['3', '6', '9', '#'],
     ['A', 'B', 'C', 'D']
 ]
- 
+
 ROW_PINS = [18, 23, 24, 25]
 COL_PINS = [12, 16, 20, 21]
 
@@ -59,7 +59,7 @@ def getKey(prompt="", prompt2=""):
                         key = (MATRIX[i][j])
 
                         if (key == "A"):
-                            time.sleep(0.5)
+                            time.sleep(0.8)
                             return finput
                         elif (key == "B"):
                             finput = finput[:-1]
@@ -68,7 +68,7 @@ def getKey(prompt="", prompt2=""):
                             lcd.lcd_display_string(prompt2, 2)
                             lcd.lcd_display_string(finput, 3)
                             lcd.lcd_display_string("(A)OK (B)BSp (C)Cncl", 4)
-                            time.sleep(0.5)
+                            time.sleep(0.8)
                         elif (key == "C"):
                             finput = ""
                             lcd.lcd_clear()
@@ -81,7 +81,7 @@ def getKey(prompt="", prompt2=""):
                         else:
                             finput = finput + key
                             lcd.lcd_display_string(finput, 3)
-                            time.sleep(0.5)
+                            time.sleep(0.8)
 
                         # while(GPIO.input(ROW_PINS[i]) == 0):
                         #    pass
@@ -149,6 +149,13 @@ def get_read_interval():
     return read_interval
 
 
+def get_initial_weight():
+    prompt = "Enter initial"
+    prompt2 = "weight"
+    initial_weight = getKey(prompt, prompt2)
+    return initial_weight
+
+
 def getTempAndHum():
     r = requests.get(ip + '/data')
     data = r.json()
@@ -188,12 +195,13 @@ def sequence():
     set_temp = get_set_temp()
     cook_time = get_cook_time()
     read_interval = get_read_interval()
+    initial_weight = get_initial_weight()
 
     lcd.lcd_clear()
-    lcd.lcd_display_string("Confirm", 1)
-    lcd.lcd_display_string(set_temp + " C", 2)
+    lcd.lcd_display_string("Press # to send", 1)
+    """lcd.lcd_display_string(set_temp + " C", 2)
     lcd.lcd_display_string(cook_time + " sec", 3)
-    lcd.lcd_display_string(read_interval + " sec", 4)
+    lcd.lcd_display_string(read_interval + " sec", 4) """
 
     key = getKey()
 
@@ -209,7 +217,7 @@ def sequence():
 
     lcd.lcd_clear()
 
-    return name, set_temp, cook_time, read_interval
+    return name, set_temp, cook_time, read_interval, initial_weight
 
 
 def login():
@@ -223,7 +231,7 @@ def login():
 
 def set_variables():
     token = login()
-    name, stemp, ctime, rinte = sequence()
+    name, stemp, ctime, rinte, initw = sequence()
     url = ip + '/process'
 
     headers = {
@@ -234,7 +242,8 @@ def set_variables():
         "name": str(name),
         "stemp": int(stemp),
         "ctime": float(ctime),
-        "rinte": float(rinte)
+        "rinte": float(rinte),
+        "initw": float(initw)
     }
 
     r = requests.post(url, headers=headers, json=datas)
@@ -243,6 +252,7 @@ def set_variables():
 
 
 def main():
+    time.sleep(2)
     try:
         while True:
             if checkProcess():

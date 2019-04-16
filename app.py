@@ -42,7 +42,12 @@ global start_read
 global read_counter
 global timer
 global time_left
+global tempc
+global humc
+global time_left
 time_left = ""
+tempc = ""
+humc = ""
 timer = 0
 start_read = False
 stop_run = True
@@ -307,7 +312,7 @@ def get_all_processes_by_user(current_user):  # only the users processes
 
     # get all the processes by the user
     processes = ProcessData.query.filter_by(
-        user_id=current_user.public_id).all()
+        user_id=current_user.name).all()
 
     output = []
 
@@ -453,9 +458,14 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         global read_counter
         global stop_run
         global time_left
+        global tempc
+        global humc
 
         temp, hum, ts = get_temphumi_data(pid)
         timeleft = str(datetime.timedelta(seconds=cook_time))
+        time_left = timeleft
+        tempc = temp
+        humc = hum
         timer = datetime.datetime.now() # float(base_time) - float(datetime.timedelta(seconds=cook_time).total_seconds())
         print(timer)
         rtemp = round(temp, 2)
@@ -465,6 +475,7 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         lcd.lcd_display_string("Temp: {:0.2f}C".format(temp), 1)
         lcd.lcd_display_string("Hum: {:0.2f}%".format(hum), 2)
         lcd.lcd_display_string("ETA: " + timeleft, 3)
+        lcd.lcd_display_string("(*)Stop", 4)
 
         send_current(str(rtemp), str(rhum), timeleft, stop_run)
 
@@ -521,7 +532,7 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
             break
 
 
-def log_process_data(pid, name, set_temp, cook_time, read_interval, ts, current_user):
+def log_process_data(pid, name, set_temp, cook_time, read_interval, initial_weight, ts, current_user):
 
     process_data = ProcessData(process_id=pid, name=name, set_temp=set_temp,
                                cook_time=cook_time, read_int=read_interval, initial_w=initial_weight, time_stamp=ts, user_id=current_user)
@@ -539,9 +550,8 @@ def adjust_heater_power(set_temp, current_temp):
 
 def adjust_fan_power(set_temp, current_temp):
     global stop_run
-
     if stop_run:
-        pi.set_PWM_dutycycle(fan, 64)
+        pi.write(fan, 0)
     else:
         pi.set_PWM_dutycycle(fan, 64)
 
@@ -577,12 +587,13 @@ def start_process(pid, set_temp, cook_time, read_interval):
 @app.route('/data', methods=['GET'])
 def get_th():
     global time_left
+    global tempc
+    global humc
     global stop_run
-    temp, hum, ts = get_temphumi_data()
 
     return jsonify({
-            'temperature': temp,
-            'humidity': hum,
+            'temperature': "{}".format(tempc),
+            'humidity': "{}".format(humc),
             'timeleft': time_left,
             'stop': stop_run
         })
