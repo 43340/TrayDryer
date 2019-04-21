@@ -59,7 +59,7 @@ def getKey(prompt="", prompt2=""):
                         key = (MATRIX[i][j])
 
                         if (key == "A"):
-                            time.sleep(0.8)
+                            time.sleep(0.5)
                             return finput
                         elif (key == "B"):
                             finput = finput[:-1]
@@ -68,23 +68,52 @@ def getKey(prompt="", prompt2=""):
                             lcd.lcd_display_string(prompt2, 2)
                             lcd.lcd_display_string(finput, 3)
                             lcd.lcd_display_string("(A)OK (B)BSp (C)Cncl", 4)
-                            time.sleep(0.8)
+                            time.sleep(0.5)
                         elif (key == "C"):
                             finput = ""
                             lcd.lcd_clear()
+                            lcd.lcd_display_string(prompt, 1)
+                            lcd.lcd_display_string(prompt2, 2)
+                            lcd.lcd_display_string(finput, 3)
+                            lcd.lcd_display_string("(A)OK (B)BSp (C)Cncl", 4)
                         elif (key == "D"):
                             main()
                         elif (key == "#"):
-                            return key
+                            pass
                         elif (key == "*"):
-                            return key
+                            pass
                         else:
                             finput = finput + key
                             lcd.lcd_display_string(finput, 3)
-                            time.sleep(0.8)
+                            time.sleep(0.5)
 
                         # while(GPIO.input(ROW_PINS[i]) == 0):
                         #    pass
+                GPIO.output(COL_PINS[j], 1)
+            # time.sleep(0.2)
+    except KeyboardInterrupt:
+        GPIO.cleanup()
+
+
+def getKeyAction():
+    finput = ""
+
+    try:
+        GPIO.output(12, 1)
+        GPIO.output(16, 1)
+        GPIO.output(20, 1)
+        GPIO.output(21, 1)
+
+        while True:
+            # test #
+            for j in range(4):
+                GPIO.output(COL_PINS[j], 0)
+            # time.sleep(0.1)
+                for i in range(4):
+                    if GPIO.input(ROW_PINS[i]) == 0:
+                        key = (MATRIX[i][j])
+
+                        return key
                 GPIO.output(COL_PINS[j], 1)
             # time.sleep(0.2)
     except KeyboardInterrupt:
@@ -146,6 +175,10 @@ def get_read_interval():
     prompt = "Enter the interval"
     prompt2 = "to read data"
     read_interval = getKey(prompt, prompt2)
+
+    if(read_interval == ''):
+        return '0'
+
     return read_interval
 
 
@@ -203,10 +236,10 @@ def sequence():
     lcd.lcd_display_string(cook_time + " sec", 3)
     lcd.lcd_display_string(read_interval + " sec", 4) """
 
-    key = getKey()
+    key = getKeyAction()
 
     while(key != '#'):
-        key = getKey()
+        key = getKeyAction()
 
     lcd.lcd_clear()
     lcd.lcd_display_string("Sending...", 1)
@@ -258,7 +291,7 @@ def main():
             if checkProcess():
                 set_variables()
             else:
-                key = getKey()
+                key = getKeyAction()
                 if(key == '*'):
                     stopProcess()
     except:

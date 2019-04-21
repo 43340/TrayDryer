@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # xzx
-from flask import Flask, request, jsonify, make_response
+from flask import Flask, request, jsonify, make_response, render_template
 from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -32,7 +32,8 @@ os.system('python /home/pi/dryer/lcdkp.py &')
 
 pi = pigpio.pi()
 sensor1 = si7021.si7021(1)
-sensor2 = si7021.si7021(3)
+sensor2 = si7021.si7021(4)
+sensor3 = si7021.si7021(3)
 pin = 26
 fan = 6
 pi.set_mode(pin, pigpio.OUTPUT)
@@ -43,11 +44,23 @@ global read_counter
 global timer
 global time_left
 global tempc
+global tempc1
+global tempc2
+global tempc3
 global humc
+global humc1
+global humc2
+global humc3
 global time_left
 time_left = ""
 tempc = ""
+tempc1 = ""
+tempc2 = ""
+tempc3 = ""
 humc = ""
+humc1 = ""
+humc2 = ""
+humc3 = ""
 timer = 0
 start_read = False
 stop_run = True
@@ -92,7 +105,13 @@ class ProcessData(db.Model):
 class DHTData(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     temp = db.Column(db.Integer)
+    temp1 = db.Column(db.Integer)
+    temp2 = db.Column(db.Integer)
+    temp3 = db.Column(db.Integer)
     hum = db.Column(db.Integer)
+    hum1 = db.Column(db.Integer)
+    hum2 = db.Column(db.Integer)
+    hum3 = db.Column(db.Integer)
     time_stamp = db.Column(db.String(80))
     process_id = db.Column(db.String(50))
 
@@ -182,7 +201,7 @@ def get_one_user(current_user, public_id):
 def create_user(current_user):
 
     if not current_user.admin:
-        return jsonify({'message': 'Cannot perforn that function'})
+        return jsonify({'message': 'Cannot perform that function'})
 
     data = request.get_json()
 
@@ -332,7 +351,6 @@ def get_all_processes_by_user(current_user):  # only the users processes
     return jsonify(output)
 
 
-# TODO: Change the specs cause this code smells
 @app.route('/process', methods=['POST'])
 @token_required
 def new_process(current_user):
@@ -417,7 +435,13 @@ def get_process_by_id(current_user, process_id):
     for data in dhtdata:
         dht_data = {}
         dht_data['temp'] = data.temp
+        dht_data['temp1'] = data.temp1
+        dht_data['temp2'] = data.temp2
+        dht_data['temp3'] = data.temp3
         dht_data['hum'] = data.hum
+        dht_data['hum1'] = data.hum1
+        dht_data['hum2'] = data.hum2
+        dht_data['hum3'] = data.hum3
         dht_data['time_stamp'] = data.time_stamp
         dht_data['process_id'] = data.process_id
         output.append(dht_data)
@@ -432,10 +456,16 @@ def get_process_by_id(current_user, process_id):
 #  ██║     ╚██████╔╝██║ ╚████║╚██████╗   ██║   ██║╚██████╔╝██║ ╚████║███████║
 #  ╚═╝      ╚═════╝ ╚═╝  ╚═══╝ ╚═════╝   ╚═╝   ╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝
 #
-def send_current(temp, hum, time_left, stop_run):
+def send_current(temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, time_left, stop_run):
     socketio.emit('some event', {
         'temp': temp,
+        'temp1': temp1,
+        'temp2': temp2,
+        'temp3': temp3,
         'hum': hum,
+        'hum1': hum1,
+        'hum2': hum2,
+        'hum3': hum3,
         'timeleft': time_left,
         'stop_run': stop_run
     })
@@ -443,64 +473,87 @@ def send_current(temp, hum, time_left, stop_run):
 
 def get_temphumi_data(pid=""):
 
-    temp = sensor1.Temperature()# + sensor2.Temperature()) / 2
-    hum = sensor1.Humidity()# + sensor2.Humidity()) / 2
+    temp = (sensor1.Temperature() + sensor2.Temperature() + sensor3.Temperature()) / 3
+    hum = (sensor1.Humidity() + sensor2.Humidity() + sensor3.Humidity()) / 3
+
+    temp1 = sensor1.Temperature()
+    temp2 = sensor2.Temperature()
+    temp3 = sensor3.Temperature()
+    temp = (temp1 + temp2 + temp3) / 3
+    hum1 = sensor1.Humidity()
+    hum2 = sensor2.Humidity()
+    hum3 = sensor3.Humidity()
+    hum = (hum1 + hum2 + hum3) / 3
 
     if hum is not None and temp is not None:
         ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-        return temp, hum, ts
+        return temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, ts
 
 
-# TODO: Function is getting too bloated. Try slimming ti down
 def log_data(pid, set_temp, cook_time, read_interval, base_time):
     try:
         global read_counter
         global stop_run
         global time_left
         global tempc
+        global tempc1
+        global tempc2
+        global tempc3
         global humc
+        global humc1
+        global humc2
+        global humc3
 
-        temp, hum, ts = get_temphumi_data(pid)
+        temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, ts = get_temphumi_data(pid)   
         timeleft = str(datetime.timedelta(seconds=cook_time))
         time_left = timeleft
         tempc = temp
+        tempc1 = temp1
+        tempc2 = temp2
+        tempc3 = temp3
         humc = hum
-        timer = datetime.datetime.now() # float(base_time) - float(datetime.timedelta(seconds=cook_time).total_seconds())
-        print(timer)
+        humc1 = hum1
+        humc2 = hum2
+        humc3 = hum3
         rtemp = round(temp, 2)
+        rtemp1 = round(temp1, 2)
+        rtemp2 = round(temp2, 2)
+        rtemp3 = round(temp3, 2)
         rhum = round(hum, 2)
-        print(temp)
-        print(hum)
-        lcd.lcd_display_string("Temp: {:0.2f}C".format(temp), 1)
-        lcd.lcd_display_string("Hum: {:0.2f}%".format(hum), 2)
-        lcd.lcd_display_string("ETA: " + timeleft, 3)
-        lcd.lcd_display_string("(*)Stop", 4)
+        rhum1 = round(hum1, 2)
+        rhum2 = round(hum2, 2)
+        rhum3 = round(hum3, 2)
+        timer = str(datetime.datetime.now())  # float(base_time) - float(datetime.timedelta(seconds=cook_time).total_seconds())
+        lcd.lcd_display_string("    |Ave|C1 |C2 |C3 ", 1)
+        lcd.lcd_display_string("Temp|{}C|{}C|{}C|{}C".format(int(rtemp), int(rtemp1), int(rtemp2), int(rtemp3)), 2)
+        lcd.lcd_display_string("Hum |{}%|{}%|{}%|{}%".format(int(rhum), int(rhum1), int(rhum2), int(rhum3)), 3)
+        lcd.lcd_display_string("ETA: " + timeleft + "(*)Stop", 4)
+        # lcd.lcd_display_string("(*)Stop", 4)
 
-        send_current(str(rtemp), str(rhum), timeleft, stop_run)
+        send_current(str(rtemp), str(rtemp1), str(rtemp2), str(rtemp3), str(rhum), str(rhum1), str(rhum2), str(rhum3), timeleft, stop_run)
 
         adjust_heater_power(set_temp, temp)
         adjust_fan_power(set_temp, temp)
 
         if read_counter >= read_interval:
             read_counter = 0
-            dht_data = DHTData(temp=rtemp, hum=rhum, time_stamp=timer, process_id=pid)
+            dht_data = DHTData(temp=rtemp, temp1=rtemp1, temp2=rtemp2,
+                               temp3=rtemp3, hum=rhum, hum1=rhum1, hum2=rhum2,
+                               hum3=rhum3, time_stamp=timer, process_id=pid)
             db.session.add(dht_data)
             db.session.commit()
-        read_counter = read_counter + 1
-        cook_time = cook_time - 1
+        read_counter = read_counter + read_interval
+        cook_time = cook_time - read_interval
     except Exception as error:
         print(error)
-        dht_data = DHTData(temp=0, hum=0, time_stamp=0, process_id=pid)
+        dht_data = DHTData(temp=0, temp1=0, temp2=0,
+                           temp3=0, hum=0, hum1=0, hum2=0,
+                           hum3=0, time_stamp=str(datetime.datetime.now()), process_id=pid)
         db.session.add(dht_data)
         db.session.commit()
         pi.write(pin, 0)
         pi.write(fan, 0)
-
-
-def get_temp():
-    temp, hum, ts = get_temphumi_data()
-    return temp
 
 
 def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
@@ -513,7 +566,7 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
     g = g_tick()
     while True:
         time.sleep(next(g))
-        cook_time = cook_time - 1
+        cook_time = cook_time - read_interval
         f(pid, set_temp, cook_time, read_interval, base_time)
 
         global stop_run
@@ -523,7 +576,9 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
             temp = get_temp()
             while (temp > 40):
                 temp = get_temp()
+                print(temp)
                 pi.write(fan, 1)
+                pi.write(pin, 0)
             pi.write(fan, 0)
             break
 
@@ -556,19 +611,18 @@ def adjust_fan_power(set_temp, current_temp):
         pi.set_PWM_dutycycle(fan, 64)
 
 
-# TODO: Change this use threading.time
 def start_process(pid, set_temp, cook_time, read_interval):
     global stop_run
     print(stop_run)
 
     while not stop_run:
 
-        current_temp, current_hum, cts = get_temphumi_data(pid)
-        adjust_heater_power(set_temp, current_temp)
-        log_data(pid, current_temp, current_hum, cts, cook_time)
+        temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, ts = get_temphumi_data(pid)
+        adjust_heater_power(set_temp, temp)
+        log_data(pid, temp, hum, ts, cook_time)
         lcd.lcd_clear()
         # do_every(read_interval, log_data, pid, set_temp, cook_time, read_interval)
-        do_every(1, log_data, pid, set_temp, cook_time, read_interval, cook_time)
+        do_every(read_interval, log_data, pid, set_temp, cook_time, read_interval, cook_time)
 
         # time.sleep(read_interval)
         cook_time = cook_time - read_interval
@@ -588,15 +642,27 @@ def start_process(pid, set_temp, cook_time, read_interval):
 def get_th():
     global time_left
     global tempc
+    global tempc1
+    global tempc2
+    global tempc3
     global humc
+    global humc1
+    global humc2
+    global humc3
     global stop_run
 
     return jsonify({
-            'temperature': "{}".format(tempc),
-            'humidity': "{}".format(humc),
-            'timeleft': time_left,
-            'stop': stop_run
-        })
+        'temperature': "{}".format(tempc),
+        'temperature1': "{}".format(tempc1),
+        'temperature2': "{}".format(tempc2),
+        'temperature3': "{}".format(tempc3),
+        'humidity': "{}".format(humc),
+        'humidity1': "{}".format(humc1),
+        'humidity2': "{}".format(humc2),
+        'humidity3': "{}".format(humc3),
+        'timeleft': time_left,
+        'stop': stop_run
+    })
 
 
 @app.route('/check', methods=['GET'])
