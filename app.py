@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 # xzx
-from flask import Flask, request, jsonify, make_response, render_template
+from flask import Flask, request, jsonify, make_response, render_template, send_file
 from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -9,7 +9,10 @@ from threading import Thread
 from flask_socketio import SocketIO, emit
 import threading
 from flask_cors import CORS, cross_origin
+import flask_excel as excel
+import xlsxwriter
 import uuid
+import math
 import jwt
 import pdfkit
 import time
@@ -28,7 +31,7 @@ basedir = os.path.abspath(os.path.dirname(__file__))
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + \
     os.path.join(basedir, 'dryer.db')
 
-os.system('python /home/pi/dryer/lcdkp.py &')
+# os.system('python /home/pi/dryer/lcdkp.py &')
 
 pi = pigpio.pi()
 sensor1 = si7021.si7021(1)
@@ -38,6 +41,7 @@ pin = 26
 fan = 6
 pi.set_mode(pin, pigpio.OUTPUT)
 pi.set_mode(fan, pigpio.OUTPUT)
+global pause_run
 global stop_run
 global start_read
 global read_counter
@@ -52,6 +56,8 @@ global humc1
 global humc2
 global humc3
 global time_left
+global fan_speed
+fan_speed = 63
 time_left = ""
 tempc = ""
 tempc1 = ""
@@ -64,8 +70,10 @@ humc3 = ""
 timer = 0
 start_read = False
 stop_run = True
+pause_run = False
 read_counter = 0
 pi.write(pin, 0)
+pi.write(fan, 0)
 lcd = lcddriver.lcd()
 lcd.lcd_clear()
 lcd.lcd_display_string("Tray Dryer", 1)
@@ -365,12 +373,9 @@ def new_process(current_user):
     uid = current_user.name
 
     log_process_data(pid, data['name'], data['stemp'],
-                     data['ctime'], data['rinte'], data['initw'], ts, uid)
+                     data['ctime'], data['rinte'], 0, ts, uid)
 
     run_process(pid, data['stemp'], data['ctime'], data['rinte'])
-
-    # run_process function. Do this on a different thread so it doesnt get clogged.
-    # run_process(name, set_temp, cook_time, read_int, time_stamp, user_id)
 
     return jsonify({'message': 'Process started!'})
 
@@ -393,9 +398,6 @@ def reset_process(current_user):
                      process.cook_time, process.read_int, process.initial_w, ts, uid)
 
     run_process(pid, process.set_temp, process.cook_time, process.read_int)
-
-    # run_process function. Do this on a different thread so it doesnt get clogged.
-    # run_process(name, set_temp, cook_time, read_int, time_stamp, user_id)
 
     return jsonify({'message': 'Process started!'})
 
@@ -543,8 +545,14 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
                                hum3=rhum3, time_stamp=timer, process_id=pid)
             db.session.add(dht_data)
             db.session.commit()
-        read_counter = read_counter + read_interval
-        cook_time = cook_time - read_interval
+        
+        global pause_run
+        if not pause_run:
+            read_counter = read_counter + 2
+            cook_time = cook_time - 2
+        else:
+            pi.write(pin, 0)
+            pi.write(fan, 0)
     except Exception as error:
         print(error)
         dht_data = DHTData(temp=0, temp1=0, temp2=0,
@@ -566,23 +574,21 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
     g = g_tick()
     while True:
         time.sleep(next(g))
-        cook_time = cook_time - read_interval
-        f(pid, set_temp, cook_time, read_interval, base_time)
+        global pause_run
+        if not pause_run:
+            cook_time = cook_time - 2
 
+        f(pid, set_temp, cook_time, read_interval, base_time)
+        
         global stop_run
         if stop_run:
             global timer
             timer = 0
-            temp = get_temp()
-            while (temp > 40):
-                temp = get_temp()
-                print(temp)
-                pi.write(fan, 1)
-                pi.write(pin, 0)
+            pi.write(pin, 0)
             pi.write(fan, 0)
             break
 
-        if cook_time < 0:
+        if cook_time <= 0:
             set_stop_run()
             break
 
@@ -605,10 +611,11 @@ def adjust_heater_power(set_temp, current_temp):
 
 def adjust_fan_power(set_temp, current_temp):
     global stop_run
+    global fan_speed
     if stop_run:
         pi.write(fan, 0)
     else:
-        pi.set_PWM_dutycycle(fan, 64)
+        pi.set_PWM_dutycycle(fan, fan_speed)
 
 
 def start_process(pid, set_temp, cook_time, read_interval):
@@ -622,7 +629,7 @@ def start_process(pid, set_temp, cook_time, read_interval):
         log_data(pid, temp, hum, ts, cook_time)
         lcd.lcd_clear()
         # do_every(read_interval, log_data, pid, set_temp, cook_time, read_interval)
-        do_every(read_interval, log_data, pid, set_temp, cook_time, read_interval, cook_time)
+        do_every(2, log_data, pid, set_temp, cook_time, read_interval, cook_time)
 
         # time.sleep(read_interval)
         cook_time = cook_time - read_interval
@@ -665,12 +672,43 @@ def get_th():
     })
 
 
+@app.route('/fan/inc', methods=['GET'])
+def inc_fan():
+    global fan_speed
+    fan_speed = math.floor(fan_speed + 12.75)
+    if(fan_speed > 255):
+        fan_speed = 255
+    print(fan_speed)
+
+    return jsonify({'message': 'The fan speed has been increased!'})
+
+
+@app.route('/fan/dec', methods=['GET'])
+def dec_fan():
+    global fan_speed
+    fan_speed = math.floor(fan_speed - 12.75)
+    if(fan_speed < 64):
+        fan_speed = 64
+    print(fan_speed)
+
+    return jsonify({'message': 'The fan speed has been decreased!'})
+
+
 @app.route('/check', methods=['GET'])
 def check_stop():
 
     global stop_run
 
     return jsonify({'stopped': stop_run})
+
+
+@app.route('/pause', methods=['GET'])
+def set_pause():
+    global pause_run
+
+    pause_run = not pause_run
+
+    return jsonify({'paused': pause_run})
 
 
 @app.route('/stop', methods=['GET'])
@@ -696,7 +734,118 @@ def set_final_weight(current_user, process_id, final_w):
     return jsonify({'message': 'The final weight has been set'})
 
 
-@app.route('/process/report/<process_id>')
+@app.route("/process/report/<process_id>")
+def dl_file(process_id):
+    query_sets = DHTData.query.filter_by(process_id=process_id).all()
+    column_names = ['time_stamp', 'temp', 'temp1', 'temp2', 'temp3', 'hum', 'hum1', 'hum2', 'hum3']
+    return excel.make_response_from_query_sets(query_sets, column_names, "xls", file_name="{}".format(process_id))
+
+
+@app.route("/download/report/<process_id>")
+def download_file(process_id):
+    print("Generating .xlsx file...")
+
+    process = ProcessData.query.filter_by(process_id=process_id).first()
+    dhtdata = DHTData.query.filter_by(process_id=process_id).all()
+
+    output = []
+
+    for data in dhtdata:
+        dht_data = {}
+        dht_data['temp'] = data.temp
+        dht_data['temp1'] = data.temp1
+        dht_data['temp2'] = data.temp1
+        dht_data['temp3'] = data.temp3
+        dht_data['hum'] = data.hum
+        dht_data['hum1'] = data.hum1
+        dht_data['hum2'] = data.hum2
+        dht_data['hum3'] = data.hum3
+        dht_data['time_stamp'] = data.time_stamp.split('.', 1)[0]
+        dht_data['process_id'] = data.process_id
+        output.append(dht_data)
+
+    workbook = xlsxwriter.Workbook('{}.xlsx'.format(process_id))
+    worksheet = workbook.add_worksheet()
+
+    merge_format = workbook.add_format({
+        'align':    'center',
+        'valign':   'vcenter',
+    })
+
+    merge_format_title = workbook.add_format({
+        'align':    'center',
+        'valign':   'vcenter',
+        'font_size': 20
+    })
+
+    merge_format_date = workbook.add_format({
+        'align':    'right',
+        'valign':   'vcenter',
+    })
+
+    merge_format_underline = workbook.add_format({
+        'align':    'center',
+        'valign':   'vcenter',
+        'underline': True
+    })
+
+    border_format = workbook.add_format({
+                            'border': 1,
+                        })
+
+    header = '&L&G&C\nMariano Marcos State University\nCollege of Engineering&R&G'
+    footer = '&CSystem created by: Alfredo Costes Jr., Justin Moises Sebastian, Janeth Tolentino, Kathleen Mae Villanueva, Arvin John Yadao\nAdvisers: Engr. Samuel Franco, Engr. Vladimir Ibanez'
+
+    worksheet.set_column(0, 0, 17.5)
+    worksheet.set_column(1, 8, 12)
+
+    worksheet.set_margins(top=1.5)
+    worksheet.merge_range('A1:I1', process.name, merge_format_title)
+    worksheet.merge_range('B2:C2', 'Set Temperature: {}'.format(process.set_temp), merge_format)
+    worksheet.merge_range('D2:E2', 'Drying Time: {}'.format(str(datetime.timedelta(seconds=process.cook_time))), merge_format)
+    worksheet.merge_range('F2:G2', 'Read Interval: {} minutes'.format((process.read_int / 60)), merge_format)
+    worksheet.merge_range('A3:I3', '{}'.format(process.time_stamp), merge_format_date)
+    worksheet.merge_range('B4:E4', 'Temperature', merge_format)
+    worksheet.merge_range('F4:I4', 'Humidity', merge_format)
+    worksheet.write('A5', 'Date/Time', border_format)
+    worksheet.write('B5', 'Sensor 1', border_format)
+    worksheet.write('C5', 'Sensor 2', border_format)
+    worksheet.write('D5', 'Sensor 3', border_format)
+    worksheet.write('E5', 'Average', border_format)
+    worksheet.write('F5', 'Sensor 1', border_format)
+    worksheet.write('G5', 'Sensor 2', border_format)
+    worksheet.write('H5', 'Sensor 3', border_format)
+    worksheet.write('I5', 'Average', border_format)
+    worksheet.set_landscape()
+    worksheet.set_header(header, {'image_left': 'mmsu-logo.png', 'image_right': 'coe-logo.png'})
+    worksheet.set_footer(footer)
+
+    ordered_list=["time_stamp", "temp", "temp1", "temp2", "temp3", "hum", "hum1", "hum2", "hum3", "process_id"]
+
+    row = 5
+    for data in output:
+        for _key,_value in data.items():
+            col=ordered_list.index(_key)
+            worksheet.write(row, col, _value, border_format)
+        row += 1
+    
+    row_name_sign = len(output) + 9
+    worksheet.merge_range('G{}:I{}'.format(row_name_sign, row_name_sign), '___{}___'.format(process.user_id), merge_format_underline)
+    worksheet.merge_range('G{}:I{}'.format(row_name_sign + 1, row_name_sign + 1), "Researcher", merge_format)
+
+    worksheet.set_column('J:J', 20, merge_format, {'hidden': 1})
+
+    workbook.close()
+
+    response = make_response(send_file('{}.xlsx'.format(process_id)))
+    response.headers['Content-Type'] = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    response.headers['Content-Disposition'] = 'attachment; filename={}.xlsx'.format(
+        process_id)
+
+    return response
+
+
+""" @app.route('/process/report/<process_id>')
 def pdf_template(process_id):
     process = ProcessData.query.filter_by(process_id=process_id).first()
     rendered = render_template('pdf_template.html', process_id=process_id, name=process.name, set_temp=process.set_temp, cook_time=str(datetime.timedelta(seconds=process.cook_time)), read_int=process.read_int, init_w=process.initial_w, time_stamp=process.time_stamp, username=process.user_id)
@@ -706,7 +855,7 @@ def pdf_template(process_id):
     response.headers['Content-Type'] = 'application/pdf'
     response.headers['Content-Disposition'] = 'inline; filename={}.pdf'.format(process_id)
 
-    return response
+    return response """
 
 
 #  ████████╗██╗  ██╗██████╗ ███████╗ █████╗ ██████╗ ███████╗
@@ -723,7 +872,9 @@ def manual_run(pid, set_temp, cook_time, read_interval):
 
 def run_process(pid, set_temp, cook_time, read_interval):
     global stop_run
+    global pause_run
     stop_run = False
+    pause_run = False
     manual_run(pid, set_temp, cook_time, read_interval)
 
 
@@ -740,4 +891,5 @@ def set_stop_run():
 
 if __name__ == '__main__':
     # app.run(host='0.0.0.0', port=8023, debug="True")
+    excel.init_excel(app)
     socketio.run(app, host='0.0.0.0', port=8023)

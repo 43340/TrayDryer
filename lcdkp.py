@@ -41,7 +41,7 @@ def getKey(prompt="", prompt2=""):
         lcd.lcd_clear()
         lcd.lcd_display_string(prompt, 1)
         lcd.lcd_display_string(prompt2, 2)
-        lcd.lcd_display_string("(A)OK (B)BSp (C)Cncl", 4)
+        lcd.lcd_display_string("(A)OK (B)BSp (C)Clr", 4)
 
     try:
         GPIO.output(12, 1)
@@ -67,7 +67,7 @@ def getKey(prompt="", prompt2=""):
                             lcd.lcd_display_string(prompt, 1)
                             lcd.lcd_display_string(prompt2, 2)
                             lcd.lcd_display_string(finput, 3)
-                            lcd.lcd_display_string("(A)OK (B)BSp (C)Cncl", 4)
+                            lcd.lcd_display_string("(A)OK (B)BSp (C)Clr", 4)
                             time.sleep(0.5)
                         elif (key == "C"):
                             finput = ""
@@ -75,13 +75,15 @@ def getKey(prompt="", prompt2=""):
                             lcd.lcd_display_string(prompt, 1)
                             lcd.lcd_display_string(prompt2, 2)
                             lcd.lcd_display_string(finput, 3)
-                            lcd.lcd_display_string("(A)OK (B)BSp (C)Cncl", 4)
+                            lcd.lcd_display_string("(A)OK (B)BSp (C)Clr", 4)
                         elif (key == "D"):
+                            stopProcess()
                             main()
                         elif (key == "#"):
                             pass
                         elif (key == "*"):
-                            pass
+                            stopProcess()
+                            main()
                         else:
                             finput = finput + key
                             lcd.lcd_display_string(finput, 3)
@@ -96,8 +98,6 @@ def getKey(prompt="", prompt2=""):
 
 
 def getKeyAction():
-    finput = ""
-
     try:
         GPIO.output(12, 1)
         GPIO.output(16, 1)
@@ -127,6 +127,10 @@ def get_set_temp():
     prompt = "Please enter the set"
     prompt2 = "temp for the process"
     set_temp = getKey(prompt, prompt2)
+
+    if(set_temp == ''):
+        return '0'
+
     return set_temp
 
 
@@ -152,41 +156,30 @@ def get_cook_time_mins():
     return cook_time
 
 
-def get_cook_time_secs():
-    prompt = "Enter the desired"
-    prompt2 = "cook time secs"
-    cook_time = getKey(prompt, prompt2)
-
-    if(cook_time == ''):
-        return '0'
-
-    return cook_time
-
-
 def get_cook_time():
     h = int(get_cook_time_hours())
     m = int(get_cook_time_mins())
-    s = int(get_cook_time_secs())
 
-    return str((((h * 60) + m) * 60) + s)
+    return str(((h * 60) + m) * 60)
+
+
+def inc_fan_speed():
+    r = requests.get(ip + '/fan/inc')
+
+
+def dec_fan_speed():
+    r = requests.get(ip + '/fan/dec')
 
 
 def get_read_interval():
     prompt = "Enter the interval"
-    prompt2 = "to read data"
+    prompt2 = "to read data (mins.)"
     read_interval = getKey(prompt, prompt2)
 
     if(read_interval == ''):
-        return '0'
+        return '2'
 
-    return read_interval
-
-
-def get_initial_weight():
-    prompt = "Enter initial"
-    prompt2 = "weight"
-    initial_weight = getKey(prompt, prompt2)
-    return initial_weight
+    return str(int(read_interval) * 60)
 
 
 def getTempAndHum():
@@ -212,6 +205,15 @@ def checkProcess():
         return True
 
 
+def pauseProcess():
+    r = requests.get(ip + '/pause')
+    data = r.json()
+
+    status = data['paused']
+
+    print(status)
+
+
 def stopProcess():
     r = requests.get(ip + '/stop')
     data = r.json()
@@ -228,7 +230,6 @@ def sequence():
     set_temp = get_set_temp()
     cook_time = get_cook_time()
     read_interval = get_read_interval()
-    initial_weight = get_initial_weight()
 
     lcd.lcd_clear()
     lcd.lcd_display_string("Press # to send", 1)
@@ -250,7 +251,7 @@ def sequence():
 
     lcd.lcd_clear()
 
-    return name, set_temp, cook_time, read_interval, initial_weight
+    return name, set_temp, cook_time, read_interval
 
 
 def login():
@@ -264,7 +265,7 @@ def login():
 
 def set_variables():
     token = login()
-    name, stemp, ctime, rinte, initw = sequence()
+    name, stemp, ctime, rinte = sequence()
     url = ip + '/process'
 
     headers = {
@@ -276,7 +277,6 @@ def set_variables():
         "stemp": int(stemp),
         "ctime": float(ctime),
         "rinte": float(rinte),
-        "initw": float(initw)
     }
 
     r = requests.post(url, headers=headers, json=datas)
@@ -286,18 +286,43 @@ def set_variables():
 
 def main():
     time.sleep(2)
-    try:
+    '''try:
         while True:
-            if checkProcess():
+            res = checkProcess()
+            if res:
                 set_variables()
             else:
+                print("yey")
                 key = getKeyAction()
-                if(key == '*'):
+                if(key == "*"):
                     stopProcess()
     except:
         lcd.lcd_clear()
         lcd.lcd_display_string("Make sure the server", 1)
         lcd.lcd_display_string("is online", 2)
+    '''
+
+    while True:
+        key = getKeyAction()
+        if(key == '*'):
+            if(not checkProcess()):
+                stopProcess()
+
+        if(key == 'A'):
+            inc_fan_speed()
+            time.sleep(1)
+
+        if(key == 'B'):
+            dec_fan_speed()
+            time.sleep(1)
+
+        if(key == 'C'):
+            pauseProcess()
+            time.sleep(1)
+
+        if(key == '#'):
+            if(checkProcess()):
+                set_variables()
 
 
 main()
