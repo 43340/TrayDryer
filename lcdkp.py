@@ -216,11 +216,6 @@ def pauseProcess():
 
 def stopProcess():
     r = requests.get(ip + '/stop')
-    data = r.json()
-
-    status = data['stopped']
-
-    print(status)
 
 
 def sequence():
@@ -286,21 +281,6 @@ def set_variables():
 
 def main():
     time.sleep(2)
-    '''try:
-        while True:
-            res = checkProcess()
-            if res:
-                set_variables()
-            else:
-                print("yey")
-                key = getKeyAction()
-                if(key == "*"):
-                    stopProcess()
-    except:
-        lcd.lcd_clear()
-        lcd.lcd_display_string("Make sure the server", 1)
-        lcd.lcd_display_string("is online", 2)
-    '''
 
     while True:
         key = getKeyAction()

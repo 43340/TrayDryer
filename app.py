@@ -57,6 +57,10 @@ global humc2
 global humc3
 global time_left
 global fan_speed
+global open_time
+global open_time_timer
+open_time_timer = 0
+open_time = False
 fan_speed = 63
 time_left = ""
 tempc = ""
@@ -473,6 +477,12 @@ def send_current(temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, time_left, st
     })
 
 
+def get_temp():
+    temp = (sensor1.Temperature() + sensor2.Temperature() + sensor3.Temperature()) / 3
+
+    return temp
+
+
 def get_temphumi_data(pid=""):
 
     temp = (sensor1.Temperature() + sensor2.Temperature() + sensor3.Temperature()) / 3
@@ -506,6 +516,7 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         global humc1
         global humc2
         global humc3
+        global open_time_timer
 
         temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, ts = get_temphumi_data(pid)   
         timeleft = str(datetime.timedelta(seconds=cook_time))
@@ -530,7 +541,15 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
         lcd.lcd_display_string("    |Ave|C1 |C2 |C3 ", 1)
         lcd.lcd_display_string("Temp|{}C|{}C|{}C|{}C".format(int(rtemp), int(rtemp1), int(rtemp2), int(rtemp3)), 2)
         lcd.lcd_display_string("Hum |{}%|{}%|{}%|{}%".format(int(rhum), int(rhum1), int(rhum2), int(rhum3)), 3)
-        lcd.lcd_display_string("ETA: " + timeleft + "(*)Stop", 4)
+
+        if (open_time):
+            open_time_time_left = str(datetime.timedelta(seconds=open_time_timer))
+            process = ProcessData.query.filter_by(process_id=pid).first()
+            process.cook_time = open_time_timer
+            db.session.commit()
+            lcd.lcd_display_string("ETA: " + open_time_time_left + "(*)Stop", 4)
+        else:
+            lcd.lcd_display_string("ETA: " + timeleft + "(*)Stop", 4)
         # lcd.lcd_display_string("(*)Stop", 4)
 
         send_current(str(rtemp), str(rtemp1), str(rtemp2), str(rtemp3), str(rhum), str(rhum1), str(rhum2), str(rhum3), timeleft, stop_run)
@@ -545,14 +564,17 @@ def log_data(pid, set_temp, cook_time, read_interval, base_time):
                                hum3=rhum3, time_stamp=timer, process_id=pid)
             db.session.add(dht_data)
             db.session.commit()
-        
+
         global pause_run
         if not pause_run:
-            read_counter = read_counter + 2
-            cook_time = cook_time - 2
-        else:
-            pi.write(pin, 0)
-            pi.write(fan, 0)
+            if open_time:
+                send_current(str(rtemp), str(rtemp1), str(rtemp2), str(rtemp3), str(rhum), str(rhum1), str(rhum2), str(rhum3), open_time_time_left, stop_run)
+                open_time_timer = open_time_timer + 2
+                read_counter = read_counter + 2
+            else:
+                send_current(str(rtemp), str(rtemp1), str(rtemp2), str(rtemp3), str(rhum), str(rhum1), str(rhum2), str(rhum3), timeleft, stop_run)
+                read_counter = read_counter + 2
+                cook_time = cook_time - 2
     except Exception as error:
         print(error)
         dht_data = DHTData(temp=0, temp1=0, temp2=0,
@@ -588,9 +610,10 @@ def do_every(period, f, pid, set_temp, cook_time, read_interval, base_time):
             pi.write(fan, 0)
             break
 
-        if cook_time <= 0:
-            set_stop_run()
-            break
+        if(not open_time):
+            if cook_time <= 0:
+                set_stop_run()
+                break
 
 
 def log_process_data(pid, name, set_temp, cook_time, read_interval, initial_weight, ts, current_user):
@@ -622,6 +645,10 @@ def start_process(pid, set_temp, cook_time, read_interval):
     global stop_run
     print(stop_run)
 
+    global open_time
+    if (cook_time == 0):
+        open_time = True
+
     while not stop_run:
 
         temp, temp1, temp2, temp3, hum, hum1, hum2, hum3, ts = get_temphumi_data(pid)
@@ -632,11 +659,13 @@ def start_process(pid, set_temp, cook_time, read_interval):
         do_every(2, log_data, pid, set_temp, cook_time, read_interval, cook_time)
 
         # time.sleep(read_interval)
-        cook_time = cook_time - read_interval
 
-        if cook_time <= 0:
-            set_stop_run()
-            break
+        if (not open_time):
+            cook_time = cook_time - read_interval
+
+            if cook_time <= 0:
+                set_stop_run()
+                break
 
     pi.write(pin, 0)
     # pi.write(fan, 0)
@@ -657,19 +686,34 @@ def get_th():
     global humc2
     global humc3
     global stop_run
+    global open_time
 
-    return jsonify({
-        'temperature': "{}".format(tempc),
-        'temperature1': "{}".format(tempc1),
-        'temperature2': "{}".format(tempc2),
-        'temperature3': "{}".format(tempc3),
-        'humidity': "{}".format(humc),
-        'humidity1': "{}".format(humc1),
-        'humidity2': "{}".format(humc2),
-        'humidity3': "{}".format(humc3),
-        'timeleft': time_left,
-        'stop': stop_run
-    })
+    if (open_time):
+        return jsonify({
+            'temperature': "{}".format(tempc),
+            'temperature1': "{}".format(tempc1),
+            'temperature2': "{}".format(tempc2),
+            'temperature3': "{}".format(tempc3),
+            'humidity': "{}".format(humc),
+            'humidity1': "{}".format(humc1),
+            'humidity2': "{}".format(humc2),
+            'humidity3': "{}".format(humc3),
+            'timeleft': open_time_timer,
+            'stop': stop_run
+        }) 
+    else:
+        return jsonify({
+            'temperature': "{}".format(tempc),
+            'temperature1': "{}".format(tempc1),
+            'temperature2': "{}".format(tempc2),
+            'temperature3': "{}".format(tempc3),
+            'humidity': "{}".format(humc),
+            'humidity1': "{}".format(humc1),
+            'humidity2': "{}".format(humc2),
+            'humidity3': "{}".format(humc3),
+            'timeleft': time_left,
+            'stop': stop_run
+        })
 
 
 @app.route('/fan/inc', methods=['GET'])
@@ -803,7 +847,7 @@ def download_file(process_id):
     worksheet.merge_range('A1:I1', process.name, merge_format_title)
     worksheet.merge_range('B2:C2', 'Set Temperature: {}'.format(process.set_temp), merge_format)
     worksheet.merge_range('D2:E2', 'Drying Time: {}'.format(str(datetime.timedelta(seconds=process.cook_time))), merge_format)
-    worksheet.merge_range('F2:G2', 'Read Interval: {} minutes'.format((process.read_int / 60)), merge_format)
+    worksheet.merge_range('F2:G2', 'Read Interval: {} minute(s)'.format((process.read_int / 60)), merge_format)
     worksheet.merge_range('A3:I3', '{}'.format(process.time_stamp), merge_format_date)
     worksheet.merge_range('B4:E4', 'Temperature', merge_format)
     worksheet.merge_range('F4:I4', 'Humidity', merge_format)
@@ -880,9 +924,21 @@ def run_process(pid, set_temp, cook_time, read_interval):
 
 def set_stop_run():
     global stop_run
+    global open_time
+    global open_time_timer
+    open_time_timer = 0
+    open_time = False
+    stop_run = True
+    stop_temp = get_temp()
+    while (stop_temp > 40):
+        pi.write(fan, 1)
+        time.sleep(1)
+        stop_temp = get_temp()
+        print(stop_temp)
+        lcd.lcd_clear()
+        lcd.lcd_display_string("Temperature: {}".format(round(stop_temp, 2)), 1)
     pi.write(pin, 0)
     pi.write(fan, 0)
-    stop_run = True
     time.sleep(1)
     lcd.lcd_clear()
     lcd.lcd_display_string("Tray Dryer", 1)
